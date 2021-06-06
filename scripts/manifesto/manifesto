@@ -150,13 +150,6 @@ class ManifestHeader(object):
     GB_VERSION_MINOR = 1
 
     def __init__(self, major, minor):
-        if (major != ManifestHeader.GB_VERSION_MAJOR or
-                minor != ManifestHeader.GB_VERSION_MINOR):
-            raise Error("invalid '[{}]' format version '{}.{}'"
-                    "(only supports '{}.{}')".format(
-                        MnfsParser.MNFS_HEADER, major, minor,
-                        ManifestHeader.GB_VERSION_MAJOR,
-                        ManifestHeader.GB_VERSION_MINOR))
         self.major = major
         self.minor = minor
 

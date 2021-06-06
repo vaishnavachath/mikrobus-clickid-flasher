@@ -24,6 +24,10 @@ static unsigned char mikrobus_manifest_click_builtin[] = {
 #include "mikrobus_click_manifest.inc"
 };
 
+static unsigned char mikrobus_manifest_click_fixed_builtin[] = {
+#include "mikrobus_click_fixed_manifest.inc"
+};
+
 LOG_MODULE_REGISTER(mikrobus, CONFIG_MIKROBUS_LOG_LEVEL);
 
 #define W1_SKIP_ROM_CMD 0xCC
@@ -31,6 +35,13 @@ LOG_MODULE_REGISTER(mikrobus, CONFIG_MIKROBUS_LOG_LEVEL);
 #define MIKROBUS_ID_EEPROM_READ_SCRATCHPAD_CMD 0xAA
 #define MIKROBUS_ID_EEPROM_COPY_SCRATCHPAD_CMD 0x55
 #define MIKROBUS_ID_EEPROM_READ_MEMORY_CMD 0xF0
+#define MIKROBUS_ID_EEPROM_SCRATCHPAD_SIZE 32
+#define MIKROBUS_ID_EEPROM_BLOCK_PROT_CONTROL_SIZE 10
+#define MIKROBUS_ID_EEPROM_PROTECTION_CTRL_ADDR 0x0A00
+#define MIKROBUS_ID_USER_EEPROM_ADDR 0x0A0A
+#define MIKROBUS_ID_USER_EEPROM_SIZE 18
+
+#define MIKROBUS_FIXED_MANIFEST_START_ADDR 0x0000
 
 #define US_TO_SYS_CLOCK_HW_CYCLES(us) \
 	((uint64_t)sys_clock_hw_cycles_per_sec() * (us) / USEC_PER_SEC + 1)
@@ -68,7 +79,6 @@ static void inline mikrobusid_delay(unsigned int cycles_to_wait)
 
 static int mikrobusid_enter_id_mode(struct mikrobusid_context *context)
 {
-
 	if (!context)
 		return -EINVAL;
 	/* set RST LOW */
@@ -76,15 +86,14 @@ static int mikrobusid_enter_id_mode(struct mikrobusid_context *context)
 	return 0;
 }
 
-// static int mikrobusid_exit_id_mode(struct mikrobusid_context *context) {
-// 	int i;
-
-// 	if(!context)
-// 		return -EINVAL;
-// 	/* set RST LOW */
-// 	gpio_pin_set(context->rst_gpio, context->rst_pin, 1);
-// 	return 0;
-// }
+static int mikrobusid_exit_id_mode(struct mikrobusid_context *context) 
+{
+	if(!context)
+		return -EINVAL;
+	/* set RST HIGH */
+	gpio_pin_set(context->rst_gpio, context->rst_pin, 1);
+	return 0;
+}
 
 /*
  * performs full page write sequence -> write scratchpad, verify, copy to memory
@@ -93,7 +102,7 @@ static int mikrobusid_enter_id_mode(struct mikrobusid_context *context)
 static int mikrobus_write_memory(uint8_t *data, uint16_t target_address, struct w1_io_context *w1_io_context, struct w1_io *w1_gpio_io)
 {
 
-	uint8_t TA1, TA2, ES, readbyte[32];
+	uint8_t TA1, TA2, ES, readbyte[MIKROBUS_ID_EEPROM_SCRATCHPAD_SIZE];
 	int found, iter = 0;
 
 	found = w1_gpio_io->reset_bus(w1_io_context);
@@ -107,7 +116,7 @@ static int mikrobus_write_memory(uint8_t *data, uint16_t target_address, struct 
 	w1_gpio_io->write_8(w1_io_context, target_address & 0xFF);
 	w1_gpio_io->write_8(w1_io_context, (target_address >> 8) & 0xFF);
 
-	for (iter = 0; iter < 32; iter++)
+	for (iter = 0; iter < MIKROBUS_ID_EEPROM_SCRATCHPAD_SIZE; iter++)
 	{
 		w1_gpio_io->write_8(w1_io_context, data[iter]);
 	}
@@ -125,10 +134,16 @@ static int mikrobus_write_memory(uint8_t *data, uint16_t target_address, struct 
 	TA2 = w1_gpio_io->read_8(w1_io_context);
 	ES = w1_gpio_io->read_8(w1_io_context);
 
-	for (iter = 0; iter < 32; iter++)
+	for (iter = 0; iter < MIKROBUS_ID_EEPROM_SCRATCHPAD_SIZE; iter++)
 	{
 		readbyte[iter] = w1_gpio_io->read_8(w1_io_context);
 	}
+
+	if (memcmp(readbyte, data, MIKROBUS_ID_EEPROM_SCRATCHPAD_SIZE)) {
+		LOG_ERR("mikrobus scratchpad verify mismatch");
+		return -EINVAL;
+	}
+
 	k_sleep(K_MSEC(10));
 
 	found = w1_gpio_io->reset_bus(w1_io_context);
@@ -151,23 +166,23 @@ static int mikrobus_write_memory(uint8_t *data, uint16_t target_address, struct 
  * performs full block write sequence -> multiple times write scratchpad, verify, copy to memory
  * only supports multiples of scratchpad size, if input data is smaller, will be padded while writing
  */
-static int mikrobus_write_block(uint8_t *data, unsigned int count, struct w1_io_context *w1_io_context, struct w1_io *w1_gpio_io)
+static int mikrobus_write_block(uint8_t *data, unsigned int count, uint16_t writeaddr, struct w1_io_context *w1_io_context, struct w1_io *w1_gpio_io)
 {
 	uint16_t wraddr = 0;
-	uint16_t len = count - (count % 32);
-	uint8_t scratchpad_write[32];
+	uint16_t len = count - (count % MIKROBUS_ID_EEPROM_SCRATCHPAD_SIZE);
+	uint8_t scratchpad_write[MIKROBUS_ID_EEPROM_SCRATCHPAD_SIZE];
 
 	while (len > 0)
 	{
-		mikrobus_write_memory(data + wraddr, wraddr, w1_io_context, w1_gpio_io);
-		wraddr += 32;
-		len -= 32;
+		mikrobus_write_memory(data + wraddr, wraddr + writeaddr, w1_io_context, w1_gpio_io);
+		wraddr += MIKROBUS_ID_EEPROM_SCRATCHPAD_SIZE;
+		len -= MIKROBUS_ID_EEPROM_SCRATCHPAD_SIZE;
 	}
 
-	if (count % 32)
+	if (count % MIKROBUS_ID_EEPROM_SCRATCHPAD_SIZE)
 	{
-		memcpy(scratchpad_write, data + wraddr, count % 32);
-		mikrobus_write_memory(scratchpad_write, wraddr, w1_io_context, w1_gpio_io);
+		memcpy(scratchpad_write, data + wraddr, count % MIKROBUS_ID_EEPROM_SCRATCHPAD_SIZE);
+		mikrobus_write_memory(scratchpad_write, wraddr + writeaddr, w1_io_context, w1_gpio_io);
 	}
 	return 0;
 }
@@ -196,6 +211,161 @@ static int mikrobus_read_block(uint8_t *rdata, unsigned int count, uint16_t addr
 	return 0;
 }
 
+static int mikrobus_setup_eeprom_protection_control(uint8_t fixed_blocks, struct w1_io_context *w1_io_context, struct w1_io *w1_gpio_io) {
+
+	uint8_t protcontrol_read[MIKROBUS_ID_EEPROM_BLOCK_PROT_CONTROL_SIZE];
+	uint8_t protcontrol_write[MIKROBUS_ID_EEPROM_BLOCK_PROT_CONTROL_SIZE] = {0};
+	uint8_t TA1, TA2, ES, readbyte[MIKROBUS_ID_EEPROM_BLOCK_PROT_CONTROL_SIZE];
+	int found, iter = 0;
+	int i;
+
+
+	mikrobus_read_block(protcontrol_read, MIKROBUS_ID_EEPROM_BLOCK_PROT_CONTROL_SIZE, MIKROBUS_ID_EEPROM_PROTECTION_CTRL_ADDR, w1_io_context, w1_gpio_io);
+	LOG_HEXDUMP_DBG(protcontrol_read, sizeof(protcontrol_read), "mikrobus eeprom protection control bytes [0x0A00]:");
+
+	/* write protect blocks 7-9 (fixed manifest) */
+	for( i = 0; i < fixed_blocks; i++)
+		 protcontrol_write[i] = 0x55;
+
+    LOG_HEXDUMP_DBG(protcontrol_write, sizeof(protcontrol_write), "mikrobus eeprom protection control write bytes [0x0A00]:");
+
+	/* check if we really need to update protection status */
+	if (memcmp(protcontrol_read, protcontrol_write, MIKROBUS_ID_EEPROM_BLOCK_PROT_CONTROL_SIZE)) {
+
+		found = w1_gpio_io->reset_bus(w1_io_context);
+		if (found)
+		{
+			LOG_ERR("w1 device not found");
+			return -ENODEV;
+		}
+		w1_gpio_io->write_8(w1_io_context, W1_SKIP_ROM_CMD);
+		w1_gpio_io->write_8(w1_io_context, MIKROBUS_ID_EEPROM_WRITE_SCRATCHPAD_CMD);
+		w1_gpio_io->write_8(w1_io_context, MIKROBUS_ID_EEPROM_PROTECTION_CTRL_ADDR & 0xFF);
+		w1_gpio_io->write_8(w1_io_context, (MIKROBUS_ID_EEPROM_PROTECTION_CTRL_ADDR >> 8) & 0xFF);
+
+		for (iter = 0; iter < MIKROBUS_ID_EEPROM_BLOCK_PROT_CONTROL_SIZE; iter++)
+		{
+			w1_gpio_io->write_8(w1_io_context, protcontrol_write[iter]);
+		}
+
+		found = w1_gpio_io->reset_bus(w1_io_context);
+		if (found)
+		{
+			LOG_ERR("w1 device not found");
+			return -ENODEV;
+		}
+		w1_gpio_io->write_8(w1_io_context, W1_SKIP_ROM_CMD);
+		w1_gpio_io->write_8(w1_io_context, MIKROBUS_ID_EEPROM_READ_SCRATCHPAD_CMD);
+
+		TA1 = w1_gpio_io->read_8(w1_io_context);
+		TA2 = w1_gpio_io->read_8(w1_io_context);
+		ES = w1_gpio_io->read_8(w1_io_context);
+
+		for (iter = 0; iter < MIKROBUS_ID_EEPROM_BLOCK_PROT_CONTROL_SIZE; iter++)
+		{
+			readbyte[iter] = w1_gpio_io->read_8(w1_io_context);
+		}
+
+		if (memcmp(readbyte, protcontrol_write, MIKROBUS_ID_EEPROM_BLOCK_PROT_CONTROL_SIZE)) {
+			LOG_ERR("mikrobus scratchpad verify mismatch");
+			return -EINVAL;
+		}
+
+		k_sleep(K_MSEC(10));
+
+		found = w1_gpio_io->reset_bus(w1_io_context);
+		if (found)
+		{
+			LOG_ERR("w1 device not found");
+			return -ENODEV;
+		}
+
+		w1_gpio_io->write_8(w1_io_context, W1_SKIP_ROM_CMD);
+		w1_gpio_io->write_8(w1_io_context, MIKROBUS_ID_EEPROM_COPY_SCRATCHPAD_CMD);
+		w1_gpio_io->write_8(w1_io_context, MIKROBUS_ID_EEPROM_PROTECTION_CTRL_ADDR & 0xFF);
+		w1_gpio_io->write_8(w1_io_context, (MIKROBUS_ID_EEPROM_PROTECTION_CTRL_ADDR >> 8) & 0xFF);
+		w1_gpio_io->write_8(w1_io_context, ES);
+		k_sleep(K_MSEC(10));
+	}
+	mikrobus_read_block(protcontrol_read, MIKROBUS_ID_EEPROM_BLOCK_PROT_CONTROL_SIZE, MIKROBUS_ID_EEPROM_PROTECTION_CTRL_ADDR, w1_io_context, w1_gpio_io);
+	LOG_HEXDUMP_DBG(protcontrol_read, sizeof(protcontrol_read), "mikrobus eeprom protection control bytes [0x0A00]:");
+
+	return 0;
+}
+
+static int mikrobus_write_user_eeprom(uint8_t fixed_blocks, struct w1_io_context *w1_io_context, struct w1_io *w1_gpio_io) {
+
+	uint8_t eeprom_read[MIKROBUS_ID_USER_EEPROM_SIZE];
+	uint8_t eeprom_write[MIKROBUS_ID_USER_EEPROM_SIZE] = {0};
+	uint8_t TA1, TA2, ES, readbyte[MIKROBUS_ID_USER_EEPROM_SIZE];
+	int found, iter = 0;
+	int i;
+
+	mikrobus_read_block(eeprom_read, MIKROBUS_ID_USER_EEPROM_SIZE, MIKROBUS_ID_USER_EEPROM_ADDR, w1_io_context, w1_gpio_io);
+	LOG_HEXDUMP_DBG(eeprom_read, sizeof(eeprom_read), "mikrobus user eeprom bytes [0x0A0A]:");
+
+	eeprom_write[0] = fixed_blocks;
+	found = w1_gpio_io->reset_bus(w1_io_context);
+	if (found)
+	{
+		LOG_ERR("w1 device not found");
+		return -ENODEV;
+	}
+	w1_gpio_io->write_8(w1_io_context, W1_SKIP_ROM_CMD);
+	w1_gpio_io->write_8(w1_io_context, MIKROBUS_ID_EEPROM_WRITE_SCRATCHPAD_CMD);
+	w1_gpio_io->write_8(w1_io_context, MIKROBUS_ID_USER_EEPROM_ADDR & 0xFF);
+	w1_gpio_io->write_8(w1_io_context, (MIKROBUS_ID_USER_EEPROM_ADDR >> 8) & 0xFF);
+
+	for (iter = 0; iter < MIKROBUS_ID_USER_EEPROM_SIZE; iter++)
+	{
+		w1_gpio_io->write_8(w1_io_context, eeprom_write[iter]);
+	}
+
+	found = w1_gpio_io->reset_bus(w1_io_context);
+	if (found)
+	{
+		LOG_ERR("w1 device not found");
+		return -ENODEV;
+	}
+	w1_gpio_io->write_8(w1_io_context, W1_SKIP_ROM_CMD);
+	w1_gpio_io->write_8(w1_io_context, MIKROBUS_ID_EEPROM_READ_SCRATCHPAD_CMD);
+
+	TA1 = w1_gpio_io->read_8(w1_io_context);
+	TA2 = w1_gpio_io->read_8(w1_io_context);
+	ES = w1_gpio_io->read_8(w1_io_context);
+
+	for (iter = 0; iter < MIKROBUS_ID_USER_EEPROM_SIZE; iter++)
+	{
+		readbyte[iter] = w1_gpio_io->read_8(w1_io_context);
+	}
+
+	if (memcmp(readbyte, eeprom_write, MIKROBUS_ID_USER_EEPROM_SIZE)) {
+		LOG_ERR("mikrobus scratchpad verify mismatch");
+		return -EINVAL;
+	}
+
+	k_sleep(K_MSEC(10));
+
+	found = w1_gpio_io->reset_bus(w1_io_context);
+	if (found)
+	{
+		LOG_ERR("w1 device not found");
+		return -ENODEV;
+	}
+
+	w1_gpio_io->write_8(w1_io_context, W1_SKIP_ROM_CMD);
+	w1_gpio_io->write_8(w1_io_context, MIKROBUS_ID_EEPROM_COPY_SCRATCHPAD_CMD);
+	w1_gpio_io->write_8(w1_io_context, MIKROBUS_ID_USER_EEPROM_ADDR & 0xFF);
+	w1_gpio_io->write_8(w1_io_context, (MIKROBUS_ID_USER_EEPROM_ADDR >> 8) & 0xFF);
+	w1_gpio_io->write_8(w1_io_context, ES);
+	k_sleep(K_MSEC(10));
+	
+	mikrobus_read_block(eeprom_read, MIKROBUS_ID_USER_EEPROM_SIZE, MIKROBUS_ID_USER_EEPROM_ADDR, w1_io_context, w1_gpio_io);
+	LOG_HEXDUMP_DBG(eeprom_read, sizeof(eeprom_read), "mikrobus user eeprom bytes [0x0A0A]:");
+	return 0;	
+
+}
+
 static int mikrobusid_init(const struct device *dev)
 {
 
@@ -207,6 +377,7 @@ static int mikrobusid_init(const struct device *dev)
 	struct w1_io *w1_gpio_io;
 	int err;
 	uint8_t readdata[512];
+	uint16_t mikrobus_variable_manifest_start_addr;
 
 	context->cs_gpio = device_get_binding(config->cs_gpio_name);
 	if (!context->cs_gpio)
@@ -257,15 +428,60 @@ static int mikrobusid_init(const struct device *dev)
 	w1_gpio_io = w1_master->w1_gpio_io;
 	k_sleep(K_MSEC(100));
 
-	uint8_t protcontrol[10];
-	mikrobus_read_block(protcontrol, 10, 0x0A00, w1_io_context, w1_gpio_io);
-	LOG_HEXDUMP_INF(protcontrol, sizeof(protcontrol), "Protection Control: ");
+	/* write and verify fixed mikrobus manifest at start of eeprom */
+	LOG_INF("writing mikrobus fixed manifest at 0x%x ", MIKROBUS_FIXED_MANIFEST_START_ADDR);
+	err = mikrobus_write_block(mikrobus_manifest_click_fixed_builtin, sizeof(mikrobus_manifest_click_fixed_builtin), MIKROBUS_FIXED_MANIFEST_START_ADDR,  w1_io_context, w1_gpio_io);
+	if(err) {
+		LOG_ERR("mikrobus fixed manfest write failed");
+		return err;
+	}
+	err = mikrobus_read_block(readdata, sizeof(mikrobus_manifest_click_fixed_builtin), MIKROBUS_FIXED_MANIFEST_START_ADDR, w1_io_context, w1_gpio_io);
+	if(err) {
+		LOG_ERR("mikrobus fixed manfest read failed");
+		return err;
+	}
+	if (memcmp(readdata, mikrobus_manifest_click_fixed_builtin, sizeof(mikrobus_manifest_click_fixed_builtin))) {
+		LOG_ERR("mikrobus fixed manfest read mismatch");
+		return -EINVAL;
+	}
+	LOG_HEXDUMP_INF(readdata, sizeof(mikrobus_manifest_click_fixed_builtin), "mikrobus fixed manifest read data:");
 
-	mikrobus_write_block(mikrobus_manifest_click_builtin, sizeof(mikrobus_manifest_click_builtin), w1_io_context, w1_gpio_io);
+	mikrobus_variable_manifest_start_addr = ((sizeof(mikrobus_manifest_click_fixed_builtin) >> 8) + 1) << 8;
+	LOG_INF("writing mikrobus variable manifest at 0x%x ", mikrobus_variable_manifest_start_addr);
+	
+	/* write and verify variable mikrobus manifest at start of eeprom */
+	err = mikrobus_write_block(mikrobus_manifest_click_builtin, sizeof(mikrobus_manifest_click_builtin), mikrobus_variable_manifest_start_addr,  w1_io_context, w1_gpio_io);
+	if(err) {
+		LOG_ERR("mikrobus variable manfest write failed");
+		return err;
+	}
+	err = mikrobus_read_block(readdata, sizeof(mikrobus_manifest_click_builtin), mikrobus_variable_manifest_start_addr, w1_io_context, w1_gpio_io);
+	if(err) {
+		LOG_ERR("mikrobus variable manfest read failed");
+		return err;
+	}
 
-	mikrobus_read_block(readdata, 512, 0x0000, w1_io_context, w1_gpio_io);
+	if (memcmp(readdata, mikrobus_manifest_click_builtin, sizeof(mikrobus_manifest_click_builtin))) {
+		LOG_ERR("mikrobus variable manfest read mismatch");
+		return -EINVAL;
+	}
+	LOG_HEXDUMP_INF(readdata, sizeof(mikrobus_manifest_click_builtin), "mikrobus variable manifest read data:");
 
-	LOG_HEXDUMP_INF(readdata, sizeof(readdata), "manifest data:");
+	/*
+	 * only enable write protection if really necessary (this is irreversible)
+	 */
+	//mikrobus_setup_eeprom_protection_control( mikrobus_variable_manifest_start_addr >> 8, w1_io_context, w1_gpio_io);
+
+    mikrobus_write_user_eeprom(mikrobus_variable_manifest_start_addr >> 8, w1_io_context, w1_gpio_io);
+
+	err = mikrobusid_exit_id_mode(context);
+	if (err)
+	{
+		LOG_ERR("failed to exit mikrobus ID mode (err %d)", err);
+		return err;
+	}
+
+	LOG_INF("MIKROBUS %s MANIFEST written succesfully \n", CONFIG_MIKROBUS_FLASHER_CLICK_NAME);
 
 	return 0;
 }
