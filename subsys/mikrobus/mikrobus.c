@@ -257,10 +257,6 @@ static int mikrobusid_init(const struct device *dev)
 	w1_gpio_io = w1_master->w1_gpio_io;
 	k_sleep(K_MSEC(100));
 
-	uint8_t protcontrol[10];
-	mikrobus_read_block(protcontrol, 10, 0x0A00, w1_io_context, w1_gpio_io);
-	LOG_HEXDUMP_INF(protcontrol, sizeof(protcontrol), "Protection Control: ");
-
 	mikrobus_write_block(mikrobus_manifest_click_builtin, sizeof(mikrobus_manifest_click_builtin), w1_io_context, w1_gpio_io);
 
 	mikrobus_read_block(readdata, 512, 0x0000, w1_io_context, w1_gpio_io);
