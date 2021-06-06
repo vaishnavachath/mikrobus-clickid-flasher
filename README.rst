@@ -28,7 +28,7 @@ Next, update git submodules. Currently, there is a git submodule for the
 
 .. code-block:: bash
 
-    cd greybus
+    cd mikrobus
     git submodule init
     git submodule update
     cd ..
