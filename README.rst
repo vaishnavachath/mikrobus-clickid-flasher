@@ -36,4 +36,5 @@ Next, update git submodules. Currently, there is a git submodule for the
 Currently the only the CC1352 based boards are supported :
 
 .. code-block:: bash
-    west build -b beagleconnect_freedom -t flash ../mikrobus/samples/subsys/mikrobus/flasher
+
+    west build -b beagleconnect_freedom -t flash ../mikrobus/samples/subsys/mikrobus/flasher -DCONFIG_MIKROBUS_FLASHER_CLICK_NAME=\"RTC-6-CLICK\"
