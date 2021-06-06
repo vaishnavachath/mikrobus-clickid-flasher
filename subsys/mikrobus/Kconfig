@@ -1,0 +1,26 @@
+# Kconfig - mikrobus configuration options
+#
+# SPDX-License-Identifier: BSD-3-Clause
+
+menuconfig MIKROBUS
+	bool "mikrobus"
+	help
+	  This option enables mikrobus support.
+
+if MIKROBUS
+
+config MIKROBUS_FLASHER_CLICK_NAME
+	string "mikrobus Click Name"
+	default ""
+	help
+	  This is the name of the Click Board which is connected
+	  to the mikrobus port on the board, the click manifest
+	  should already be present in the manifesto manifests
+	  directory.This click manifest will be written to the 
+	  eeprom memory.
+
+module = MIKROBUS
+module-str = MIKROBUS
+source "subsys/logging/Kconfig.template.log_config"
+
+endif # MIKROBUS

@@ -1,0 +1,19 @@
+/*
+ * Copyright (c) 2020 Friedt Professional Engineering Services, Inc
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ */
+
+/ {
+	mikrobus0: mikrobus0 {
+		id = <0>;
+		compatible = "zephyr,mikrobusid";
+		label = "MIKROBUS_0";
+		cs-gpios = <&gpio0 28 GPIO_ACTIVE_HIGH>;
+		rst-gpios = <&gpio0 6 GPIO_ACTIVE_HIGH>;
+	};
+};
+
+&flash0 {
+	status = "okay";
+};
