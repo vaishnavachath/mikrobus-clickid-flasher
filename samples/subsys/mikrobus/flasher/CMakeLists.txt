@@ -12,10 +12,21 @@ mnfs_to_mnfb(
 ${ZEPHYR_BINARY_DIR}/include/generated/mikrobus_click_manifest.mnfb
 )
 
+mnfs_to_mnfb(
+../../../../scripts/MIKROBUS-FIXED-MANIFEST.mnfs
+${ZEPHYR_BINARY_DIR}/include/generated/mikrobus_click_fixed_manifest.mnfb
+)
+
 generate_inc_file_for_target(
 app
 ${ZEPHYR_BINARY_DIR}/include/generated/mikrobus_click_manifest.mnfb
 ${ZEPHYR_BINARY_DIR}/include/generated/mikrobus_click_manifest.inc
+)
+
+generate_inc_file_for_target(
+app
+${ZEPHYR_BINARY_DIR}/include/generated/mikrobus_click_fixed_manifest.mnfb
+${ZEPHYR_BINARY_DIR}/include/generated/mikrobus_click_fixed_manifest.inc
 )
 
 target_sources(app PRIVATE src/main.c)
